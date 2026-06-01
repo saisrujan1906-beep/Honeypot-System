@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Honeypot Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0d1117; color: #e6edf3; font-family: Arial; padding: 20px; }
+        h1 { color: #e94560; margin-bottom: 5px; }
+        .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+        .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; text-align: center; }
+        .stat-card .num { font-size: 28px; font-weight: bold; color: #e94560; }
+        .stat-card .lbl { font-size: 12px; color: #888; margin-top: 4px; }
+        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .card h3 { color: #e94560; margin-bottom: 12px; font-size: 14px; }
+        #log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        #log-table th { background: #21262d; color: #888; padding: 8px; text-align: left; border-bottom: 1px solid #30363d; }
+        #log-table td { padding: 8px; border-bottom: 1px solid #21262d; }
+        .badge { padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+        .ssh  { background: #0d2137; color: #58a6ff; }
+        .ftp  { background: #2d2000; color: #d29922; }
+        .http { background: #2d0f2d; color: #bc8cff; }
+        .alert-box { background: #2d0f0f; border: 1px solid #e94560; border-radius: 8px; padding: 12px; margin-bottom: 20px; display: none; }
+        .alert-box.show { display: block; }
+        .alert-box h3 { color: #e94560; margin-bottom: 6px; }
+        .alert-box p { color: #ccc; font-size: 13px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #00ff88; display: inline-block; margin-right: 6px; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    </style>
+</head>
+<body>
+    <h1>Honeypot System v3.0</h1>
+    <p class="subtitle"><span class="dot"></span>Live Attack Dashboard — Sai Srujan Reddy</p>
+
+    <div class="alert-box" id="alert-box">
+        <h3>BRUTE FORCE ALERT!</h3>
+        <p id="alert-msg"></p>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card"><div class="num" id="total">0</div><div class="lbl">Total Attacks</div></div>
+        <div class="stat-card"><div class="num" id="ssh-count" style="color:#58a6ff;">0</div><div class="lbl">SSH Attempts</div></div>
+        <div class="stat-card"><div class="num" id="ftp-count" style="color:#d29922;">0</div><div class="lbl">FTP Attempts</div></div>
+        <div class="stat-card"><div class="num" id="http-count" style="color:#bc8cff;">0</div><div class="lbl">HTTP Attempts</div></div>
+    </div>
+
+    <div class="grid2">
+        <div class="card">
+            <h3>Attacks by Service</h3>
+            <canvas id="pieChart" height="200"></canvas>
+        </div>
+        <div class="card">
+            <h3>Attack Timeline</h3>
+            <canvas id="lineChart" height="200"></canvas>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Live Attack Log</h3>
+        <table id="log-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Service</th>
+                    <th>IP</th>
+                    <th>Location</th>
+                    <th>Username</th>
+                    <th>Password</th>
+                    <th>Event</th>
+                </tr>
+            </thead>
+            <tbody id="log-body"></tbody>
+        </table>
+    </div>
+
+<script>
+const socket = io();
+
+let counts = {SSH: 0, FTP: 0, HTTP: 0};
+let timeline = [];
+
+const pieChart = new Chart(document.getElementById('pieChart'), {
+    type: 'doughnut',
+    data: {
+        labels: ['SSH', 'FTP', 'HTTP'],
+        datasets: [{
+            data: [0, 0, 0],
+            backgroundColor: ['#58a6ff', '#d29922', '#bc8cff'],
+            borderWidth: 0
+        }]
+    },
+    options: { plugins: { legend: { labels: { color: '#e6edf3' } } } }
+});
+
+const lineChart = new Chart(document.getElementById('lineChart'), {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'Attacks',
+            data: [],
+            borderColor: '#e94560',
+            backgroundColor: 'rgba(233,69,96,0.1)',
+            fill: true,
+            tension: 0.4
+        }]
+    },
+    options: {
+        scales: {
+            x: { ticks: { color: '#888' }, grid: { color: '#21262d' } },
+            y: { ticks: { color: '#888' }, grid: { color: '#21262d' } }
+        },
+        plugins: { legend: { labels: { color: '#e6edf3' } } }
+    }
+});
+
+socket.on('new_event', function(data) {
+    if (data.event === 'LOGIN ATTEMPT') {
+        counts[data.service] = (counts[data.service] || 0) + 1;
+        const total = counts.SSH + counts.FTP + counts.HTTP;
+
+        document.getElementById('total').textContent      = total;
+        document.getElementById('ssh-count').textContent  = counts.SSH;
+        document.getElementById('ftp-count').textContent  = counts.FTP;
+        document.getElementById('http-count').textContent = counts.HTTP;
+
+        pieChart.data.datasets[0].data = [counts.SSH, counts.FTP, counts.HTTP];
+        pieChart.update();
+
+        const now = new Date().toLocaleTimeString();
+        lineChart.data.labels.push(now);
+        lineChart.data.datasets[0].data.push(total);
+        if (lineChart.data.labels.length > 20) {
+            lineChart.data.labels.shift();
+            lineChart.data.datasets[0].data.shift();
+        }
+        lineChart.update();
+    }
+
+    if (data.alert) {
+        const box = document.getElementById('alert-box');
+        document.getElementById('alert-msg').textContent =
+            `IP: ${data.ip} | Service: ${data.service} | Attempts: ${data.attempts}`;
+        box.classList.add('show');
+        setTimeout(() => box.classList.remove('show'), 5000);
+    }
+
+    const tbody = document.getElementById('log-body');
+    const row = document.createElement('tr');
+    const svcClass = data.service.toLowerCase();
+    row.innerHTML = `
+        <td>${data.timestamp}</td>
+        <td><span class="badge ${svcClass}">${data.service}</span></td>
+        <td>${data.ip}</td>
+        <td>${data.geo}</td>
+        <td>${data.username || '-'}</td>
+        <td>${data.password || '-'}</td>
+        <td>${data.event}</td>
+    `;
+    tbody.insertBefore(row, tbody.firstChild);
+});
+</script>
+</body>
+</html>
